@@ -2,7 +2,8 @@ import numpy as np
 
 """ 
     First layer with a single hidden unit, followed by a sigmoid activation function.
-    Uses a RMS loss function.
+    Uses a MSE loss function.
+    Written by Ashriel Brian Tang.
 """
 np.random.seed(1)                       # Seeding for deterministic outputs
 
