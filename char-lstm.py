@@ -2,15 +2,13 @@ import numpy as np
 from random import uniform
 
 """ 
-    Character-level RNN built with reference to @karpathy's gist: https://gist.github.com/karpathy/d4dee566867f8291f086
+    Character-level LSTM built using numpy.
 """
-def sigmoid(x, deriv=False):
-    # sigmoid function
-    sig = 1 / (1 + np.exp(-x))
-    if (deriv == True):
-        return sig * (1 - sig)
-    return sig
 
+def sigmoid(x):
+    # sigmoid function
+    return 1 / (1 + np.exp(-x))
+    
 np.random.seed(1)
 
 # data I/O
@@ -23,21 +21,37 @@ index_to_char = { i:ch for i, ch in enumerate(chars)}                           
 char_to_index = { ch:i for i, ch in enumerate(chars)}
 
 # Initialising hyperparams
-hidden_units = 100
+hidden_units = 120
 seq_length = 25
 
 # Initialising params
-std = (1.0 / np.sqrt(vocab_size + hidden_units))
-Wf = np.random.randn(hidden_units, hidden_units + vocab_size) * std
-bf = np.zeros((hidden_units, 1))
-Wu = np.random.randn(hidden_units, hidden_units + vocab_size) * std
-bu = np.zeros((hidden_units, 1))
-Wc = np.random.randn(hidden_units, hidden_units + vocab_size) * std
-bc = np.zeros((hidden_units, 1))
-Wo = np.random.randn(hidden_units, hidden_units + vocab_size) * std
-bo = np.zeros((hidden_units, 1))
-Wy = np.random.randn(vocab_size, hidden_units) * std
-by = np.zeros((vocab_size, 1))
+params = {}                                                                         # stores the parameters
+grads = {}                                                                          # stores the parameters params
+
+std = (1.0 / np.sqrt(vocab_size + hidden_units))                                    # Xavier Init
+params['Wf'] = np.random.randn(hidden_units, hidden_units + vocab_size) * std       # Forget gate
+params['bf'] = np.zeros((hidden_units, 1))
+
+params['Wu'] = np.random.randn(hidden_units, hidden_units + vocab_size) * std       # Update gate
+params['bu'] = np.zeros((hidden_units, 1))
+
+params['Wc'] = np.random.randn(hidden_units, hidden_units + vocab_size) * std       # Candidate gate
+params['bc'] = np.zeros((hidden_units, 1))
+
+params['Wo'] = np.random.randn(hidden_units, hidden_units + vocab_size) * std       # Output gate
+params['bo'] = np.zeros((hidden_units, 1))
+
+params['Wy'] = np.random.randn(vocab_size, hidden_units) * std                      # pre-Softmax hidden layer
+params['by'] = np.zeros((vocab_size, 1))
+
+# initialise gradients
+for key, p in params.items():
+    grads['d' + str(key)] = np.zeros_like(p)
+
+def reset_grads():
+    for key in grads.keys():
+        grads[key].fill(0)
+    return
 
 def computeModel(inputs, targets, c_prev, h_prev):
     """ 
@@ -51,7 +65,7 @@ def computeModel(inputs, targets, c_prev, h_prev):
     """
     x_state, h_state, c_state, y_state, prob_state, concat_state  = {}, {}, {}, {}, {}, {}             # keeps track of the input, hidden, output, probability states at each timestep
     ft_gate, up_gate, out_gate, c_tilde = {}, {}, {}, {}
-    c_tanh = {}                   # stores tanh computations that will be reused in backprop
+    c_tanh = {}                                                         # stores tanh computations that will be reused in backprop
     loss = 0
     h_state[-1] = np.copy(h_prev)                                       # copies the last hidden state from the previous sequence of inputs, as the new initial hidden state
     c_state[-1] = np.copy(c_prev)                                       # candidate state
@@ -64,108 +78,102 @@ def computeModel(inputs, targets, c_prev, h_prev):
 
         # concat_state is a stacked column vector of the hidden activation and the input vectors, at timestep t        
         concat_state[t] = np.concatenate((h_state[t-1], x_state[t]), axis=0)
-
-        ft_gate[t] = sigmoid(np.dot(Wf, concat_state[t]) + bf)                  # (hidden_units, 1)
-        up_gate[t] = sigmoid(np.dot(Wu, concat_state[t]) + bu)
-        out_gate[t] = sigmoid(np.dot(Wo, concat_state[t]) + bo)
-        c_tilde[t] = np.tanh(np.dot(Wc, concat_state[t]) + bc)                  # candidate memory cell
         
-        c_state[t] = up_gate[t] * c_tilde[t] + ft_gate[t] * c_state[t-1]              # memory cell state
+        ft_gate[t] = sigmoid(np.dot(params['Wf'], concat_state[t]) + params['bf']) 
+        up_gate[t] = sigmoid(np.dot(params['Wu'], concat_state[t]) + params['bu'])
+        out_gate[t] = sigmoid(np.dot(params['Wo'], concat_state[t]) + params['bo'])
+        c_tilde[t] = np.tanh(np.dot(params['Wc'], concat_state[t]) + params['bc'])  # candidate memory cell
+        
+        c_state[t] = up_gate[t] * c_tilde[t] + ft_gate[t] * c_state[t-1]            # memory cell state
 
-        c_tanh[t] = np.tanh(c_state[t])                                 # stores the tanh calculation to be reused in backprop
-        h_state[t] = out_gate[t] * c_tanh[t]                             # hidden activation state
-        y_state[t] = np.dot(Wy, h_state[t]) + by                               
-        prob_state[t] = np.exp(y_state[t]) / np.sum(np.exp(y_state[t]))         # softmax classification
+        c_tanh[t] = np.tanh(c_state[t])                                             # stores the tanh calculation to be reused in backprop
+        h_state[t] = out_gate[t] * c_tanh[t]                                        # hidden activation state
+        y_state[t] = np.dot(params['Wy'], h_state[t]) + params['by']                               
+        prob_state[t] = np.exp(y_state[t]) / np.sum(np.exp(y_state[t]))             # softmax classification
+
         loss += -np.log(prob_state[t][targets[t],0])   
 
+    reset_grads()
     # Backward pass
-    dWf, dWu, dWc, dWo, dWy = np.zeros_like(Wf), np.zeros_like(Wu), np.zeros_like(Wc), np.zeros_like(Wo), np.zeros_like(Wy)
-    dbf, dbu, dbc, dbo, dby = np.zeros_like(bf), np.zeros_like(bu), np.zeros_like(bc), np.zeros_like(bo), np.zeros_like(by)
-    dh_next = np.zeros_like(h_state[0])                                                         # instantiate the "next" hidden state - required in backprop (rightmost hidden state)
+    dh_next = np.zeros_like(h_state[0])                                 # instantiate the "next" hidden state - required in backprop (rightmost hidden state)
     dc_next = np.zeros_like(c_state[0])
     
     for t in reversed(range(len(inputs))):
         dy = np.copy(prob_state[t])
-        dy[targets[t]] -= 1                                                                     # Backprop into y. See derivation
+        dy[targets[t]] -= 1                                             # Backprop into y. See derivation
         
-        dWy += np.dot(dy, h_state[t].T)
-        dh = np.dot(Wy.T, dy) + dh_next
-        dby += dy
+        grads['dWy'] += np.dot(dy, h_state[t].T)
 
-        dout_gate = dh * c_tanh[t]                
-        dc = dh * out_gate[t] * (1 - c_tanh[t] * c_tanh[t]) + dc_next
-        
+        dh = np.dot(params['Wy'].T, dy) + dh_next
+        grads['dby'] += dy
+
+        dc = dh * out_gate[t] * (1 - c_tanh[t] ** 2) + dc_next
+
+        dout_gate = dh * c_tanh[t]
         dz_out = dout_gate * (out_gate[t] * (1 - out_gate[t]))
-        dbo += dz_out
-        dWo += np.dot(dz_out, concat_state[t].T)
-        
-        dft_gate = dc * c_state[t-1]
-        dc_next = dc * ft_gate[t]
+        grads['dWo'] += np.dot(dz_out, concat_state[t].T)
+        grads['dbo'] += dz_out
+
         dup_gate = dc * c_tilde[t]
-        dc_tilde = dc * up_gate[t]
-
         dz_up = dup_gate * (up_gate[t] * (1 - up_gate[t]))
-        dWu += np.dot(dz_up, concat_state[t].T)
-        dbu += dz_up
+        grads['dWu'] += np.dot(dz_up, concat_state[t].T)
+        grads['dbu'] += dz_up
         
-        dz_c_tilde = dc_tilde * (1 - c_tilde[t] * c_tilde[t])
-        dWc += np.dot(dz_c_tilde, concat_state[t].T)
-        dbc += dz_c_tilde
+        dc_tilde = dc * up_gate[t]
+        dz_c_tilde = dc_tilde * (1 - c_tilde[t] ** 2)
+        grads['dWc'] += np.dot(dz_c_tilde, concat_state[t].T)
+        grads['dbc'] += dz_c_tilde
 
+        dft_gate = dc * c_state[t-1]
         dz_ft = dft_gate * (ft_gate[t] * (1 - ft_gate[t]))
-        dWf += np.dot(dz_ft, concat_state[t].T)
-        dbf += dz_ft
+        grads['dWf'] += np.dot(dz_ft, concat_state[t].T)
+        grads['dbf'] += dz_ft
 
-        dconcat_state = np.dot(Wc.T, dz_c_tilde) + np.dot(Wu.T, dz_up) + np.dot(Wf.T, dz_ft) + np.dot(Wo.T, dz_out)
-
+        dc_next = dc * ft_gate[t]
         # leftmost hidden state, which will be the rightmost hidden state for the next time-step (reversed)
-        dh_next = dconcat_state[:hidden_units, :]           # unstacking between the hidden activations and the inputs
-    for d in [dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby]:                                # grad clipping to prevent exploding gradients
-        np.clip(d, -5, 5, d)
-    return loss, dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby, h_state[len(inputs) - 1], c_state[len(inputs) - 1]                           # h_state[len(inputs) - 1] returns the most recent hidden state; this will be used as the initial h_state for the next sequence of letters
+        dconcat_state = np.dot(params['Wc'].T, dz_c_tilde) + np.dot(params['Wu'].T, dz_up) \
+                            + np.dot(params['Wf'].T, dz_ft) + np.dot(params['Wo'].T, dz_out)
+        dh_next = dconcat_state[:hidden_units, :]           # unstacking the hidden activations and the inputs
+    
+    for key in grads.keys():                                # grad clipping to prevent exploding gradients
+        np.clip(grads[key], -5, 5, out=grads[key])
+    
+    # h_state[len(inputs) - 1] returns the most recent hidden state; this will be used as the initial h_state for the next sequence of letters, similarly for c_state
+    return loss, h_state[len(inputs) - 1], c_state[len(inputs) - 1]
 
-def update_with_Adam(param, grad, v_grad, s_grad, n, learning_rate = 0.001, beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-8):
-    """ 
-        v_grad - momentum weighted-grad
-        s_grad - RMSprop weighted-grad
-        Returns
-            the updated parameter
-    """
-    v_grad = beta_1 * v_grad + (1 - beta_1) * grad
-    v_grad_corrected = v_grad / (1 - (beta_1 ** n))
 
-    s_grad = beta_2 * s_grad + (1 - beta_2) * (grad ** 2)
-    s_grad_corrected = s_grad / (1 - (beta_2 ** n))
+def gradient_checking(inputs, targets, h_prev, c_prev, num_checks = 5, delta = 1e-5):    
+    
+    global params, grads
+    _, _, _ = computeModel(inputs, targets, c_prev, h_prev)
+    grads_original = grads
 
-    param += - (learning_rate * v_grad_corrected) / (np.sqrt(s_grad_corrected) + epsilon)
-    return param
+    text = ''
 
-def gradient_checking(inputs, targets, h_prev, c_prev):
-    num_checks, delta = 15, 1e-5
-    global Wf, Wu, Wc, Wo, Wy, bf, bu, bc, bo, by
-    _, dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby, _, _ = computeModel(inputs, targets, c_prev, h_prev)
+    for key in params.keys():
+        gr_shape = grads['d' + key].shape
+        assert (params[key].shape == grads['d' + key].shape), f'Error: dims do not match: {params[key].shape} and {gr_shape}'
 
-    for param, grad, name in zip(
-                                [Wf, Wu, Wc, Wo, Wy, bf, bu, bc, bo, by], 
-                                [dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby], 
-                                ['Wf', 'Wu', 'Wc', 'Wo', 'Wy', 'bf', 'bu', 'bc', 'bo', 'by']):
-
-        assert (param.shape == grad.shape), f'Error: dims do not match: {param.shape} and {grad.shape}'
-        print (name)
         for _ in range(num_checks):
-            random_index = int(uniform(0, param.size))
-            # evaluate cost at (w + e) and (w = e)
-            original_val = param.flat[random_index]             # the original param val at this index
-            param.flat[random_index] = original_val + delta
-            loss_gt, _, _, _, _, _, _, _, _,_, _, _, _ = computeModel(inputs, targets, c_prev, h_prev)
-            param.flat[random_index] = original_val - delta
-            loss_sm, _, _, _, _, _, _, _, _,_, _, _, _ = computeModel(inputs, targets, c_prev, h_prev)
-            param.flat[random_index] = original_val
-
-            grad_analytic = grad.flat[random_index]
-            grad_numerical = (loss_gt - loss_sm) / (2 * delta)
-            relative_err = abs(grad_numerical - grad_analytic) / (abs(grad_numerical + grad_analytic))
-            print (f'{name} with i = {random_index}, {original_val}: ({grad_analytic}, {grad_numerical}) => {relative_err}')
+            random_index = int(uniform(0, params[key].size))
+            # evaluate cost at (w + e) and (w - e)
+            original_val = params[key].flat[random_index]                                         # the original param val at this index
+            
+            params[key].flat[random_index] = original_val + delta
+            loss_plus, _, _ = computeModel(inputs, targets, c_prev, h_prev)
+            
+            params[key].flat[random_index] = original_val - delta
+            loss_minus, _, _ = computeModel(inputs, targets, c_prev, h_prev)
+            
+            params[key].flat[random_index] = original_val
+            grad_analytic = grads_original['d' + key].flat[random_index]
+            
+            grad_numerical = (loss_plus - loss_minus) / (2 * delta)
+            
+            relative_err = abs(grad_numerical - grad_analytic) / (abs(grad_numerical) + abs(grad_analytic))
+            to_print = f'{key} with i = {random_index}: ({grad_analytic}, {grad_numerical}) => {relative_err} \n'
+            text = text + to_print
+    return text
 
 def sample(h, c, seed_index, n):
     """ 
@@ -184,114 +192,86 @@ def sample(h, c, seed_index, n):
         # single forward pass to sample the next character, given the previous
         concat_state = np.concatenate((h, x), axis=0)
 
-        ft_gate = sigmoid(np.dot(Wf, concat_state) + bf)                  # (hidden_units, 1)
-        up_gate = sigmoid(np.dot(Wu, concat_state) + bu)
-        out_gate = sigmoid(np.dot(Wo, concat_state) + bo)
-        c_tilde = np.tanh(np.dot(Wc, concat_state) + bc)                  # candidate memory cell
+        ft_gate = sigmoid(np.dot(params['Wf'], concat_state) + params['bf'])    # (hidden_units, 1)
+        up_gate = sigmoid(np.dot(params['Wu'], concat_state) + params['bu'])
+        out_gate = sigmoid(np.dot(params['Wo'], concat_state) + params['bo'])
+        c_tilde = np.tanh(np.dot(params['Wc'], concat_state) + params['bc'])    # candidate memory cell
         
-        c = up_gate * c_tilde + ft_gate * c              # memory cell state
-
-        h = out_gate * np.tanh(c)                             # hidden activation state
-        y = np.dot(Wy, h) + by                               
-        prob = np.exp(y) / np.sum(np.exp(y))         # softmax classification
+        c = up_gate * c_tilde + ft_gate * c                     # memory cell state
+        h = out_gate * np.tanh(c)                               # hidden activation state
+        y = np.dot(params['Wy'], h) + params['by']                               
+        prob = np.exp(y) / np.sum(np.exp(y))                    # softmax classification
 
         ix = np.random.choice(range(vocab_size), p=prob.ravel())        
         x = np.zeros((vocab_size, 1))                                           # instantiate the next character's one-hot vector
         x[ix] = 1
-        
         character_indices.append(ix)                                            # saves the character selected in time step t, to the list
     
     return character_indices
 
-def update_with_GD(param, grad, learning_rate = 0.001):
-    param += - learning_rate * grad
-    return param
-pointer, n = 0, 0                                                                   # tracks the current index of the dataset (used to determine subets of the sequences) and the number of iterations
+def update_with_GD(learning_rate = 0.01):
+    # Update params using standard GD
+    for key in params.keys():
+        params[key] += - learning_rate * grads['d' + key]
 
-v_Wf, v_Wu, v_Wc, v_Wo, v_Wy = np.zeros_like(Wf), np.zeros_like(Wu), np.zeros_like(Wc), np.zeros_like(Wo), np.zeros_like(Wy) # instantiate the weighted grads; to be used in the Adam optimization (Momentum)
-v_bf, v_bu, v_bc, v_bo, v_by = np.zeros_like(bf), np.zeros_like(bu), np.zeros_like(bc), np.zeros_like(bo), np.zeros_like(by)
-s_Wf, s_Wu, s_Wc, s_Wo, s_Wy = np.zeros_like(Wf), np.zeros_like(Wu), np.zeros_like(Wc), np.zeros_like(Wo), np.zeros_like(Wy) # instantiate the weighted grads; to be used in the Adam optimization (RMS prop)
-s_bf, s_bu, s_bc, s_bo, s_by = np.zeros_like(bf), np.zeros_like(bu), np.zeros_like(bc), np.zeros_like(bo), np.zeros_like(by)
+def update_with_Adam(n, learning_rate = 0.001, beta_1 = 0.9, beta_2 = 0.999, epsilon = 1e-8):
+    # Update params using Adam Optimizer
+    for key, val in params.items():
+        adam_params['v_' + key] = beta_1 * adam_params['v_' + key] + (1 - beta_1) * grads['d' + key]
+        v_grad_corrected = adam_params['v_' + key] / (1 - (beta_1 ** n))
+
+        adam_params['s_' + key] = beta_2 * adam_params['s_' + key] + (1 - beta_2) * (grads['d' + key] ** 2)
+        s_grad_corrected = adam_params['s_' + key] / (1 - (beta_2 ** n))
+
+        params[key] -= (learning_rate * v_grad_corrected) / (np.sqrt(s_grad_corrected) + epsilon)
+
+# initialise Adam params
+adam_params = {}
+for key, p in params.items():
+    adam_params['v_' + str(key)], adam_params['s_' + str(key)] = np.zeros_like(p), np.zeros_like(p)
 
 smooth_loss = -np.log(1.0/vocab_size) * seq_length                                  # loss at iteration 0
-
 
 epochs = 10
 batches = data_size // seq_length
 data_trimmed = data[: batches * seq_length]
+gradCheck = False                                                                   # Tracks whether gradcheck has been completed
 
-print (len(data_trimmed) - seq_length)
 for epoch in range(epochs):
-    h_prev = np.zeros((hidden_units, 1))                                    # clear the RNN memory
+    h_prev = np.zeros((hidden_units, 1))                                            # clear the RNN memory
     c_prev = np.zeros((hidden_units, 1))
-    pointer = 0                                                             # go back to the start of the data
     
     for j in range(0, len(data_trimmed) - seq_length, seq_length):
+
         # obtaining inputs
         inputs = [char_to_index[ch] for ch in data_trimmed[j: j + seq_length]]
         targets = [char_to_index[ch] for ch in data_trimmed[j + 1: j + seq_length + 1]]
-        if (j % 10000 == 0):
+
+        if (j % 10000 == 0) and (j != 0):
+            # sample text
             sampled_indices = sample(h_prev, c_prev, inputs[0], 200)
             text = ''.join([index_to_char[ix] for ix in sampled_indices])
             print ('Sampled text: ', text, '\r')
-        loss, dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby, h_prev, c_prev = computeModel(inputs, targets, c_prev, h_prev)
+        
+        loss, h_prev, c_prev = computeModel(inputs, targets, c_prev, h_prev)
         smooth_loss = smooth_loss * 0.999 + loss * 0.001                            # weighted average on the loss to reduce volatility
         
+        if (j % 100000 == 0) and (j != 0) and (gradCheck ==  True):
+            # Gradient checking
+            f = open('grad-check-results.txt', 'w')
+            f.write(gradient_checking(inputs, targets, h_prev, c_prev))
+            f.close()
+            gradCheck = False
+
         if (j % 1000 == 0):
             print (f'Loss: {smooth_loss}, at epoch {epoch} sequence {j}')
-        
+
         # Adamgrad update
-        adam_iter = (epoch * epochs) + 1
-        for param, grad, v_grad, s_grad in zip(
-                                [Wf, Wu, Wc, Wo, Wy, bf, bu, bc, bo, by], 
-                                [dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby], 
-                                [v_Wf, v_Wu, v_Wc, v_Wo, v_Wy, v_bf, v_bu, v_bc, v_bo, v_by],
-                                [s_Wf, s_Wu, s_Wc, s_Wo, s_Wy, s_bf, s_bu, s_bc, s_bo, s_by]):
-            #param = update_with_GD(param, grad)
-            param = update_with_Adam(param, grad, v_grad, s_grad, n = adam_iter)            # n + 1 to avoid beta_1 ** 0 on first iteration
-        #if  (j % 2000 == 0) and (j != 0):
-            #gradient_checking(inputs, targets, h_prev, c_prev)
+        adam_iter = epoch * epochs + j /seq_length + 1
+        update_with_Adam(n = adam_iter)
+
     
 
-
-
-
-""" while n <= 500:
-
-    if (pointer + seq_length >= len(data)) or (n == 0):
-        h_prev = np.zeros((hidden_units, 1))                                    # clear the RNN memory
-        c_prev = np.zeros((hidden_units, 1))
-        pointer = 0                                                             # go back to the start of the data
-
-    # obtaining inputs
-    inputs = [char_to_index[ch] for ch in data[pointer: pointer + seq_length]]
-    targets = [char_to_index[ch] for ch in data[pointer + 1: pointer + seq_length + 1]]
-
-    if n % 1000 == 0:
-        # sample the model
-        sampled_indices = sample(h_prev, c_prev, inputs[0], 200)
-        text = ''.join([index_to_char[ix] for ix in sampled_indices])
-        print ('Sampled text: ', text, '\r')
-
-    loss, dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby, h_prev, c_prev = computeModel(inputs, targets, c_prev, h_prev)
-    smooth_loss = smooth_loss * 0.999 + loss * 0.001                            # weighted average on the loss to reduce volatility
-    if n % 100 == 0:
-        print (f'At iteration {n}, loss of {smooth_loss}. \r')
-    
-    # Adamgrad update
-    for param, grad, v_grad, s_grad in zip(
-                            [Wf, Wu, Wc, Wo, Wy, bf, bu, bc, bo, by], 
-                            [dWf, dWu, dWc, dWo, dWy, dbf, dbu, dbc, dbo, dby], 
-                            [v_Wf, v_Wu, v_Wc, v_Wo, v_Wy, v_bf, v_bu, v_bc, v_bo, v_by],
-                            [s_Wf, s_Wu, s_Wc, s_Wo, s_Wy, s_bf, s_bu, s_bc, s_bo, s_by]):
-        
-        param = update_with_Adam(param, grad, v_grad, s_grad, n = n + 1)            # n + 1 to avoid beta_1 ** 0 on first iteration
-
-    n += 1
-    pointer += seq_length
-
-    if (n % 500 == 0) and (n != 0):
-        gradient_checking(inputs, targets, h_prev, c_prev) """
 
 
 
