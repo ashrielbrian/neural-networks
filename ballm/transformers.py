@@ -70,8 +70,21 @@ class CausalAttention(nn.Module):
 
 
 class MultiHeadCausalAttention(nn.Module):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, d_in, d_out, n_heads, context_length, dropout, qkv_bias=False) -> None:
+        super().__init__()
+
+        self.heads = nn.ModuleList(
+            [
+                CausalAttention(
+                    d_in, d_out, context_length=context_length, dropout=dropout, qkv_bias=qkv_bias
+                )
+                for _ in range(n_heads)
+            ]
+        )
+
+    def forward(self, x):
+        context_vecs = [head(x) for head in self.heads]
+        return torch.stack(context_vecs, dim=-1)
 
 
 if __name__ == "__main__":
