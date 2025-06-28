@@ -156,12 +156,34 @@ class EfficientMultiHeadCausalAttention(nn.Module):
         return self.out_proj(context_vec)
 
 
-if __name__ == "__main__":
+def test_causal_attn(inputs):
     torch.manual_seed(12)
-
-    # attn_layer = SelfAttention(3, 3)
     attn_layer = CausalAttention(3, 4, context_length=6, dropout=0.5)
 
+    print("output", attn_layer(torch.stack([inputs, inputs])).shape)
+
+
+def test_emha(inputs):
+    torch.manual_seed(42)
+
+    batch = torch.stack([inputs, inputs], dim=0)
+    batch_size, num_tokens, d_in = batch.shape
+
+    print(batch_size, num_tokens, d_in)
+
+    d_out, num_heads = 4, 2
+
+    emha = EfficientMultiHeadCausalAttention(
+        d_in=d_in, d_out=d_out, num_heads=num_heads, context_length=num_tokens
+    )
+
+    out = emha(batch)
+
+    print(out)
+    print("emha shape:", out.shape)
+
+
+if __name__ == "__main__":
     inputs = torch.tensor(
         [
             [0.43, 0.15, 0.89],
@@ -173,4 +195,5 @@ if __name__ == "__main__":
         ]
     )
 
-    print("output", attn_layer(torch.stack([inputs, inputs])).shape)
+    # test_causal_attn(inputs)
+    test_emha(inputs)
