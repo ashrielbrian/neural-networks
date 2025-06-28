@@ -89,6 +89,73 @@ class MultiHeadCausalAttention(nn.Module):
         return torch.stack(context_vecs, dim=-1)
 
 
+class EfficientMultiHeadCausalAttention(nn.Module):
+    """Uses batched matrix multiplication instead of sequentially multiplying each attention head separately."""
+
+    def __init__(self, d_in, d_out, num_heads, context_length, dropout=0.5, qkv_bias=False) -> None:
+        # d_in - token embedding size
+        # d_out = num_heads * head_dim, i.e. the total output dimension of the multihead. in the literature,
+        # the each attention head  takes an equal portion of d_out, and after causal self-attn of each head,
+        # the outputs of each head is concatenated together to give d_out again
+        assert d_out % num_heads == 0, "d_out must be divisible by num_heads"
+
+        super().__init__()
+        self.d_in = d_in
+        self.d_out = d_out
+        self.num_heads = num_heads
+        self.head_dim = d_out // num_heads
+
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+        # optional projection layer
+        self.out_proj = nn.Linear(d_out, d_out)
+
+        self.dropout = nn.Dropout(dropout)
+
+        self.register_buffer(
+            "mask", torch.triu(torch.ones(context_length, context_length), diagonal=1)
+        )
+
+    def forward(self, x):
+        batch_size, num_tokens, d_in = x.shape
+
+        queries: torch.Tensor = self.W_query(x)
+        keys: torch.Tensor = self.W_key(x)
+        values: torch.Tensor = self.W_value(x)  # (batch_size, num_tokens, d_in)
+
+        # here, we split into each head by unrolling d_in -> num_heads * head_dim
+        queries = queries.view(batch_size, num_tokens, self.num_heads, self.head_dim)
+        keys = keys.view(batch_size, num_tokens, self.num_heads, self.head_dim)
+        values = values.view(batch_size, num_tokens, self.num_heads, self.head_dim)
+
+        # transpose to (batch_size, num_heads, num_tokens, head_dim)
+        queries = queries.transpose(1, 2)
+        keys = keys.transpose(1, 2)
+        values = values.transpose(1, 2)
+
+        attn_scores = queries @ keys.transpose(
+            2, 3
+        )  # (batch_size, num_heads, num_tokens, num_tokens)
+
+        # masking truncated to num_tokens
+        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+        attn_scores.masked_fill_(mask_bool, -torch.inf)
+
+        # apply softmax on the masked scores to get the attn weights
+        attn_weights = torch.softmax(attn_scores / (self.head_dim**0.5), dim=-1)
+        self.dropout(attn_weights)  # (batch_size, num_heads, num_tokens, num_tokens)
+
+        context_vec = attn_weights @ values  # (batch_size, num_heads, num_tokens, head_dim)
+        context_vec = context_vec.transpose(1, 2)  # (batch_size, num_tokens, num_heads, head_dim)
+
+        # essentially concatenating the outputs from all the attention heads
+        context_vec = context_vec.contiguous().view(batch_size, num_tokens, self.d_out)
+
+        return self.out_proj(context_vec)
+
+
 if __name__ == "__main__":
     torch.manual_seed(12)
 
