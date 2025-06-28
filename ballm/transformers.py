@@ -19,14 +19,16 @@ class SelfAttention(nn.Module):
         attn_scores = q @ k.transpose(1, 2)
         print(
             "attn_scores:", attn_scores.shape
-        )  # (num_tokens, num_tokens), since attn_scores are computed between all the different tokens with each other
+        )  # (batch_size, num_tokens, num_tokens), since attn_scores are computed between all the different tokens with each other
 
-        # dim=-1 because we want to normalize along the last dimension, for each token
-        attn_weights = torch.softmax(attn_scores / k.shape[-1] ** 0.5, dim=-1)
+        # dim=-1 because we want to normalize along the last dimension, for each token. i.e., for each token, how important are all
+        # these other tokens, summed to 1.
+        attn_weights = torch.softmax(
+            attn_scores / k.shape[-1] ** 0.5, dim=-1
+        )  # (batch_size, num_tokens, num_tokens)
 
         print("attn_weights:", attn_weights.shape)
-
-        return attn_weights @ v
+        return attn_weights @ v  # (batch_size, num_tokens, d_out)
 
 
 class CausalAttention(nn.Module):
